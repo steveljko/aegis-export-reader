@@ -9,6 +9,9 @@ import (
 	"flag"
 	"fmt"
 	"io/ioutil"
+	"os"
+	"path/filepath"
+	"strings"
 	"syscall"
 
 	"golang.org/x/crypto/scrypt"
@@ -72,6 +75,25 @@ func promptPassword() ([]byte, error) {
 	}
 	fmt.Println()
 	return password, nil
+}
+
+// saveVaultPath saves latest successful decrypted vault path
+func saveVaultPath(vaultPath string) error {
+	cacheFile := filepath.Join(os.TempDir(), ".vault_path")
+	return os.WriteFile(cacheFile, []byte(vaultPath), 0600)
+}
+
+// loadLastVaultPath loads full path to latest successfully decrypted vault
+func loadLastVaultPath() (string, error) {
+	cacheFile := filepath.Join(os.TempDir(), ".vault_path")
+	data, err := os.ReadFile(cacheFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", err
+	}
+	return strings.TrimSpace(string(data)), nil
 }
 
 // decryptVault decrypts vault by providing vault path and decryption password
@@ -138,6 +160,8 @@ func decryptVault(vaultPath string, password []byte) ([]Entry, error) {
 		}
 	}
 
+	saveVaultPath(vaultPath)
+
 	if masterKey == nil {
 		return nil, fmt.Errorf("unable to decrypt master key with given password")
 	}
@@ -202,12 +226,16 @@ func main() {
 	var vaultPath string
 	flag.StringVar(&vaultPath, "vault", "", "Path to the vault file")
 	flag.StringVar(&vaultPath, "v", "", "Path to the vault file (shorthand)")
-
 	flag.Parse()
+
+	if vaultPath == "" {
+		latestPath, _ := loadLastVaultPath()
+		vaultPath = latestPath
+	}
 
 	vault, err := NewVault(vaultPath, password)
 	if err != nil {
-		fmt.Printf("Failed to create vault: %v\n", err)
+		fmt.Printf("Failed to decrypt vault: %v\n", err)
 		return
 	}
 
