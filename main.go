@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io/ioutil"
 	"syscall"
@@ -77,12 +78,12 @@ func promptPassword() ([]byte, error) {
 func decryptVault(vaultPath string, password []byte) ([]Entry, error) {
 	data, err := ioutil.ReadFile(vaultPath)
 	if err != nil {
-		return nil, fmt.Errorf("Failed to read vault file: %v", err)
+		return nil, fmt.Errorf("failed to read vault file: %v", err)
 	}
 
 	var vaultData VaultData
-	if err := json.Unmarshal(data, &vaultData); err != nil {
-		return nil, fmt.Errorf("Failed to parse vault JSON: %v", err)
+	if err = json.Unmarshal(data, &vaultData); err != nil {
+		return nil, fmt.Errorf("failed to parse vault JSON: %v", err)
 	}
 
 	var passwordSlots []Slot
@@ -138,44 +139,44 @@ func decryptVault(vaultPath string, password []byte) ([]Entry, error) {
 	}
 
 	if masterKey == nil {
-		return nil, fmt.Errorf("Unable to decrypt master key with given password")
+		return nil, fmt.Errorf("unable to decrypt master key with given password")
 	}
 
 	content, err := base64.StdEncoding.DecodeString(vaultData.DB)
 	if err != nil {
-		return nil, fmt.Errorf("Failed to decode vault content: %v", err)
+		return nil, fmt.Errorf("failed to decode vault content: %v", err)
 	}
 
 	nonce, err := hex.DecodeString(vaultData.Header.Params.Nonce)
 	if err != nil {
-		return nil, fmt.Errorf("Failed to decode nonce: %v", err)
+		return nil, fmt.Errorf("failed to decode nonce: %v", err)
 	}
 
 	tag, err := hex.DecodeString(vaultData.Header.Params.Tag)
 	if err != nil {
-		return nil, fmt.Errorf("Failed to decode tag: %v", err)
+		return nil, fmt.Errorf("failed to decode tag: %v", err)
 	}
 
 	ciphertext := append(content, tag...)
 
 	block, err := aes.NewCipher(masterKey)
 	if err != nil {
-		return nil, fmt.Errorf("Failed to create cipher: %v", err)
+		return nil, fmt.Errorf("failed to create cipher: %v", err)
 	}
 
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
-		return nil, fmt.Errorf("Failed to create GCM: %v", err)
+		return nil, fmt.Errorf("failed to create GCM: %v", err)
 	}
 
 	dbBytes, err := gcm.Open(nil, nonce, ciphertext, nil)
 	if err != nil {
-		return nil, fmt.Errorf("Failed to decrypt vault: %v", err)
+		return nil, fmt.Errorf("failed to decrypt vault: %v", err)
 	}
 
 	var vault AegisVault
 	if err := json.Unmarshal(dbBytes, &vault); err != nil {
-		return nil, fmt.Errorf("Failed to parse decrypted vault: %v", err)
+		return nil, fmt.Errorf("failed to parse decrypted vault: %v", err)
 	}
 
 	return vault.Entries, nil
@@ -187,7 +188,7 @@ func NewVault(vaultPath string, password []byte) (*AegisVault, error) {
 	if err != nil {
 		return nil, err
 	}
-	
+
 	return &AegisVault{Entries: entries}, nil
 }
 
@@ -198,7 +199,11 @@ func main() {
 		return
 	}
 
-	vaultPath := "export.json"
+	var vaultPath string
+	flag.StringVar(&vaultPath, "vault", "", "Path to the vault file")
+	flag.StringVar(&vaultPath, "v", "", "Path to the vault file (shorthand)")
+
+	flag.Parse()
 
 	vault, err := NewVault(vaultPath, password)
 	if err != nil {
