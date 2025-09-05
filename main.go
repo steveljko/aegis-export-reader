@@ -270,22 +270,34 @@ func renderInterface(vault *AegisVault) error {
 	table.SetCell(0, 3, tview.NewTableCell("Time Left").SetTextColor(tcell.ColorYellow).SetAlign(tview.AlignCenter))
 
 	var entries = vault.GetAll()
-	for i, entry := range entries {
-		row := i + 1
+	revealedRow := -1
 
-		table.SetCell(row, 0, tview.NewTableCell(entry.Issuer).SetTextColor(tcell.ColorWhite))
-		table.SetCell(row, 1, tview.NewTableCell(entry.Name).SetTextColor(tcell.ColorWhite))
+	update := func() {
+		for i, entry := range entries {
+			row := i + 1
 
-		code, err := generateCode(entry.Info.Secret)
-		if err != nil {
-			table.SetCell(row, 2, tview.NewTableCell("Error").SetTextColor(tcell.ColorRed).SetAlign(tview.AlignCenter))
-		} else {
-			table.SetCell(row, 2, tview.NewTableCell(code).SetTextColor(tcell.ColorGreen).SetAlign(tview.AlignCenter))
+			table.SetCell(row, 0, tview.NewTableCell(entry.Issuer).SetTextColor(tcell.ColorWhite))
+			table.SetCell(row, 1, tview.NewTableCell(entry.Name).SetTextColor(tcell.ColorWhite))
+
+			code, err := generateCode(entry.Info.Secret)
+			var displayCode string
+			if revealedRow == row {
+				displayCode = code
+			} else {
+				displayCode = strings.Repeat("*", len(code))
+			}
+			if err != nil {
+				table.SetCell(row, 2, tview.NewTableCell("Error").SetTextColor(tcell.ColorRed).SetAlign(tview.AlignCenter))
+			} else {
+				table.SetCell(row, 2, tview.NewTableCell(displayCode).SetTextColor(tcell.ColorGreen).SetAlign(tview.AlignCenter))
+			}
+
+			left, color := calculateTimeLeft()
+			table.SetCell(row, 3, tview.NewTableCell(fmt.Sprintf("%ds", left)).SetTextColor(color).SetAlign(tview.AlignCenter))
 		}
-
-		left, color := calculateTimeLeft()
-		table.SetCell(row, 3, tview.NewTableCell(fmt.Sprintf("%ds", left)).SetTextColor(color).SetAlign(tview.AlignCenter))
 	}
+
+	update()
 
 	flex := tview.NewFlex().
 		SetDirection(tview.FlexRow).
@@ -306,25 +318,29 @@ func renderInterface(vault *AegisVault) error {
 
 		for range ticker.C {
 			app.QueueUpdateDraw(func() {
-				for i := range entries {
-					row := i + 1
-
-					left, color := calculateTimeLeft()
-					table.SetCell(row, 3, tview.NewTableCell(fmt.Sprintf("%ds", left)).SetTextColor(color).SetAlign(tview.AlignCenter))
-
-					if left == 30 {
-						entry := entries[i]
-						code, err := generateCode(entry.Info.Secret)
-						if err != nil {
-							table.SetCell(row, 2, tview.NewTableCell("Error").SetTextColor(tcell.ColorRed).SetAlign(tview.AlignCenter))
-						} else {
-							table.SetCell(row, 2, tview.NewTableCell(code).SetTextColor(tcell.ColorGreen).SetAlign(tview.AlignCenter))
-						}
-					}
-				}
+				update()
 			})
 		}
 	}()
+
+	// table events
+	table.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		switch event.Key() {
+		case tcell.KeyEnter:
+			row, _ := table.GetSelection()
+			if row > 0 && row <= len(entries) {
+				if revealedRow == row {
+					revealedRow = -1
+				} else {
+					revealedRow = row
+				}
+				update()
+			}
+			return nil
+		}
+
+		return event
+	})
 
 	return app.SetRoot(flex, true).EnableMouse(true).Run()
 }
