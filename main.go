@@ -21,6 +21,7 @@ import (
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
+	clipboard "github.com/tiagomelo/go-clipboard/clipboard"
 	"golang.org/x/crypto/scrypt"
 	"golang.org/x/term"
 )
@@ -336,6 +337,29 @@ func renderInterface(vault *AegisVault) error {
 				}
 				update()
 			}
+			return nil
+		}
+
+		switch event.Rune() {
+		case 'q', 'Q':
+			app.Stop()
+			return nil
+		case 'c', 'C':
+			row, _ := table.GetSelection()
+			entry := entries[row-1]
+			code, _ := generateCode(entry.Info.Secret)
+
+			c := clipboard.New()
+			if err := c.CopyText(code); err != nil {
+				os.Exit(1)
+			}
+
+			time.AfterFunc(10*time.Second, func() {
+				if err := c.CopyText(""); err != nil {
+					os.Exit(1)
+				}
+			})
+
 			return nil
 		}
 
