@@ -3,7 +3,11 @@ package main
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hmac"
+	"crypto/sha1"
+	"encoding/base32"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"flag"
@@ -13,7 +17,10 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
+	"github.com/gdamore/tcell/v2"
+	"github.com/rivo/tview"
 	"golang.org/x/crypto/scrypt"
 	"golang.org/x/term"
 )
@@ -206,6 +213,128 @@ func decryptVault(vaultPath string, password []byte) ([]Entry, error) {
 	return vault.Entries, nil
 }
 
+// generaeteCode generates 6 digit TOTP code for specific entry by providing secret
+func generateCode(secret string) (string, error) {
+	secret = strings.ToUpper(strings.ReplaceAll(secret, " ", ""))
+
+	key, err := base32.StdEncoding.DecodeString(secret)
+	if err != nil {
+		return "", fmt.Errorf("failed to decode secret: %v", err)
+	}
+
+	timeStep := time.Now().Unix() / 30
+
+	timeBytes := make([]byte, 8)
+	binary.BigEndian.PutUint64(timeBytes, uint64(timeStep))
+
+	mac := hmac.New(sha1.New, key)
+	mac.Write(timeBytes)
+	hash := mac.Sum(nil)
+
+	offset := hash[19] & 0x0f
+	truncatedHash := binary.BigEndian.Uint32(hash[offset:offset+4]) & 0x7fffffff
+
+	code := truncatedHash % 1000000
+
+	return fmt.Sprintf("%06d", code), nil
+}
+
+// calculateTimeLeft computes remaining time until specified expiration date
+func calculateTimeLeft() (int64, tcell.Color) {
+	now := time.Now()
+	timeLeft := 30 - (now.Unix() % 30)
+
+	var timeColor tcell.Color
+	if timeLeft <= 10 {
+		timeColor = tcell.ColorRed
+	} else if timeLeft <= 20 {
+		timeColor = tcell.ColorYellow
+	} else {
+		timeColor = tcell.ColorGreen
+	}
+
+	return timeLeft, timeColor
+}
+
+func renderInterface(vault *AegisVault) error {
+	app := tview.NewApplication()
+
+	table := tview.NewTable().
+		SetBorders(true).
+		SetSelectable(true, false).
+		SetFixed(1, 0)
+
+	table.SetCell(0, 0, tview.NewTableCell("Issuer").SetTextColor(tcell.ColorYellow).SetAlign(tview.AlignCenter))
+	table.SetCell(0, 1, tview.NewTableCell("Name").SetTextColor(tcell.ColorYellow).SetAlign(tview.AlignCenter))
+	table.SetCell(0, 2, tview.NewTableCell("Code").SetTextColor(tcell.ColorYellow).SetAlign(tview.AlignCenter))
+	table.SetCell(0, 3, tview.NewTableCell("Time Left").SetTextColor(tcell.ColorYellow).SetAlign(tview.AlignCenter))
+
+	totpEntries := []Entry{}
+	for _, entry := range vault.GetAll() {
+		if strings.ToLower(entry.Type) == "totp" {
+			totpEntries = append(totpEntries, entry)
+		}
+	}
+
+	for i, entry := range totpEntries {
+		row := i + 1
+
+		table.SetCell(row, 0, tview.NewTableCell(entry.Issuer).SetTextColor(tcell.ColorWhite))
+		table.SetCell(row, 1, tview.NewTableCell(entry.Name).SetTextColor(tcell.ColorWhite))
+
+		code, err := generateCode(entry.Info.Secret)
+		if err != nil {
+			table.SetCell(row, 2, tview.NewTableCell("Error").SetTextColor(tcell.ColorRed).SetAlign(tview.AlignCenter))
+		} else {
+			table.SetCell(row, 2, tview.NewTableCell(code).SetTextColor(tcell.ColorGreen).SetAlign(tview.AlignCenter))
+		}
+
+		left, color := calculateTimeLeft()
+		table.SetCell(row, 3, tview.NewTableCell(fmt.Sprintf("%ds", left)).SetTextColor(color).SetAlign(tview.AlignCenter))
+	}
+
+	flex := tview.NewFlex().
+		SetDirection(tview.FlexRow).
+		AddItem(tview.NewTextView().
+			SetText("Aegist Export Reader").
+			SetTextAlign(tview.AlignCenter).
+			SetTextColor(tcell.ColorWhite), 1, 0, false).
+		AddItem(table, 0, 1, true)
+
+	if len(totpEntries) > 0 {
+		table.Select(1, 0)
+	}
+
+	// updates expiration time left
+	go func() {
+		ticker := time.NewTicker(1 * time.Second)
+		defer ticker.Stop()
+
+		for range ticker.C {
+			app.QueueUpdateDraw(func() {
+				for i := range totpEntries {
+					row := i + 1
+
+					left, color := calculateTimeLeft()
+					table.SetCell(row, 3, tview.NewTableCell(fmt.Sprintf("%ds", left)).SetTextColor(color).SetAlign(tview.AlignCenter))
+
+					if left == 30 {
+						entry := totpEntries[i]
+						totpCode, err := generateCode(entry.Info.Secret)
+						if err != nil {
+							table.SetCell(row, 2, tview.NewTableCell("Error").SetTextColor(tcell.ColorRed).SetAlign(tview.AlignCenter))
+						} else {
+							table.SetCell(row, 2, tview.NewTableCell(totpCode).SetTextColor(tcell.ColorGreen).SetAlign(tview.AlignCenter))
+						}
+					}
+				}
+			})
+		}
+	}()
+
+	return app.SetRoot(flex, true).EnableMouse(true).Run()
+}
+
 // NewVault creates new vault instance and decrypts it
 func NewVault(vaultPath string, password []byte) (*AegisVault, error) {
 	entries, err := decryptVault(vaultPath, password)
@@ -214,6 +343,11 @@ func NewVault(vaultPath string, password []byte) (*AegisVault, error) {
 	}
 
 	return &AegisVault{Entries: entries}, nil
+}
+
+// GetAll gets all entries from vault
+func (av *AegisVault) GetAll() []Entry {
+	return av.Entries
 }
 
 func main() {
@@ -239,8 +373,7 @@ func main() {
 		return
 	}
 
-	// print vault entries
-	for _, entry := range vault.Entries {
-		fmt.Printf("Entry UUID: %s, Name: %s, Issuer: %s\n", entry.UUID, entry.Name, entry.Issuer)
+	if err := renderInterface(vault); err != nil {
+		fmt.Println("Error loading interface")
 	}
 }
