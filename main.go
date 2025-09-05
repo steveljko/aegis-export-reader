@@ -269,14 +269,8 @@ func renderInterface(vault *AegisVault) error {
 	table.SetCell(0, 2, tview.NewTableCell("Code").SetTextColor(tcell.ColorYellow).SetAlign(tview.AlignCenter))
 	table.SetCell(0, 3, tview.NewTableCell("Time Left").SetTextColor(tcell.ColorYellow).SetAlign(tview.AlignCenter))
 
-	totpEntries := []Entry{}
-	for _, entry := range vault.GetAll() {
-		if strings.ToLower(entry.Type) == "totp" {
-			totpEntries = append(totpEntries, entry)
-		}
-	}
-
-	for i, entry := range totpEntries {
+	var entries = vault.GetAll()
+	for i, entry := range entries {
 		row := i + 1
 
 		table.SetCell(row, 0, tview.NewTableCell(entry.Issuer).SetTextColor(tcell.ColorWhite))
@@ -301,7 +295,7 @@ func renderInterface(vault *AegisVault) error {
 			SetTextColor(tcell.ColorWhite), 1, 0, false).
 		AddItem(table, 0, 1, true)
 
-	if len(totpEntries) > 0 {
+	if len(entries) > 0 {
 		table.Select(1, 0)
 	}
 
@@ -312,19 +306,19 @@ func renderInterface(vault *AegisVault) error {
 
 		for range ticker.C {
 			app.QueueUpdateDraw(func() {
-				for i := range totpEntries {
+				for i := range entries {
 					row := i + 1
 
 					left, color := calculateTimeLeft()
 					table.SetCell(row, 3, tview.NewTableCell(fmt.Sprintf("%ds", left)).SetTextColor(color).SetAlign(tview.AlignCenter))
 
 					if left == 30 {
-						entry := totpEntries[i]
-						totpCode, err := generateCode(entry.Info.Secret)
+						entry := entries[i]
+						code, err := generateCode(entry.Info.Secret)
 						if err != nil {
 							table.SetCell(row, 2, tview.NewTableCell("Error").SetTextColor(tcell.ColorRed).SetAlign(tview.AlignCenter))
 						} else {
-							table.SetCell(row, 2, tview.NewTableCell(totpCode).SetTextColor(tcell.ColorGreen).SetAlign(tview.AlignCenter))
+							table.SetCell(row, 2, tview.NewTableCell(code).SetTextColor(tcell.ColorGreen).SetAlign(tview.AlignCenter))
 						}
 					}
 				}
